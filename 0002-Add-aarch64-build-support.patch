@@ -1,0 +1,25 @@
+From 7e0b9a8e6e3c88543ed92d124f6c1bdcb0fd6ff7 Mon Sep 17 00:00:00 2001
+From: Haikel Guemar <hguemar@fedoraproject.org>
+Date: Fri, 7 Sep 2018 12:53:22 +0200
+Subject: [PATCH 2/2] Add aarch64 build support
+
+---
+ configure.ac | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/configure.ac b/configure.ac
+index c6125aa..d989b49 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -112,6 +112,8 @@ AC_SUBST(OUR_LDFLAGS)
+ AS_CASE([$host],
+         [x86_64*], [ARCHITECTURE_TUPLE=x86_64-linux-gnu],
+         [arm*],    [ARCHITECTURE_TUPLE=arm-linux-gnueabihf],
++        [aarch64*],[ARCHITECTURE_TUPLE=aarch64-linux-gnu],
++        [powerpc64le*],[ARCHITECTURE_TUPLE=powerpc64le-linux-gnu],
+         [AC_MSG_ERROR([*** unknown architecture])]
+ )
+ AC_SUBST(ARCHITECTURE_TUPLE)
+-- 
+2.17.1
+

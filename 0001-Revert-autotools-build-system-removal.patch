@@ -1,0 +1,532 @@
+From 7a1c8c6bb98a5ee5df1b48d7b7a068a17d677b5f Mon Sep 17 00:00:00 2001
+From: Haikel Guemar <hguemar@fedoraproject.org>
+Date: Sat, 1 Sep 2018 09:37:20 +0200
+Subject: [PATCH 1/2] Revert autotools build system removal
+
+(cherry picked from commit 3f7b633426223e374e0d361e185ee34f4f2cbc82)
+---
+ .autom4te.cfg              |   3 +
+ Makefile.am                | 318 +++++++++++++++++++++++++++++++++++++
+ Makefile => Makefile.meson |   0
+ autogen.sh                 |  23 +++
+ configure.ac               | 138 ++++++++++++++++
+ 5 files changed, 482 insertions(+)
+ create mode 100644 .autom4te.cfg
+ create mode 100644 Makefile.am
+ rename Makefile => Makefile.meson (100%)
+ create mode 100755 autogen.sh
+ create mode 100644 configure.ac
+
+diff --git a/.autom4te.cfg b/.autom4te.cfg
+new file mode 100644
+index 0000000..e54988b
+--- /dev/null
++++ b/.autom4te.cfg
+@@ -0,0 +1,3 @@
++begin-language: "Autoconf-without-aclocal-m4"
++args: --cache=build/.autom4te.cache
++end-language: "Autoconf-without-aclocal-m4"
+diff --git a/Makefile.am b/Makefile.am
+new file mode 100644
+index 0000000..0ebf7ba
+--- /dev/null
++++ b/Makefile.am
+@@ -0,0 +1,318 @@
++# ------------------------------------------------------------------------------
++# autotools
++
++SHELL = bash
++ACLOCAL_AMFLAGS = -I build/m4 ${ACLOCAL_FLAGS}
++AM_MAKEFLAGS = --no-print-directory
++AUTOMAKE_OPTIONS = color-tests parallel-tests
++
++GCC_COLORS ?= 'ooh, shiny!'
++export GCC_COLORS
++
++# remove targets if the command fails
++.DELETE_ON_ERROR:
++
++# keep intermediate files
++.SECONDARY:
++
++# keep the test-suite.log and Makefile around at all times
++.PRECIOUS: $(TEST_SUITE_LOG) Makefile
++
++pkgconfiglibdir=$(libdir)/pkgconfig
++bashcompletiondir = $(datadir)/bash-completion/completions
++vimftdetectdir = $(datadir)/vim/vimfiles/after/ftdetect
++vimftplugindir = $(datadir)/vim/vimfiles/after/ftplugin
++vimsyntaxdir = $(datadir)/vim/vimfiles/after/syntax
++
++include_HEADERS =
++pkgconfiglib_DATA =
++bin_PROGRAMS =
++noinst_PROGRAMS =
++noinst_LIBRARIES =
++dist_bashcompletion_DATA =
++check_PROGRAMS =
++TESTS=
++
++BUILT_SOURCES =
++CLEANFILES = $(BUILT_SOURCES)
++EXTRA_DIST =
++
++AM_CPPFLAGS = \
++	-include $(top_builddir)/build/config.h \
++	-I $(top_srcdir)/lib \
++	-I $(top_builddir)/lib \
++	$(OUR_CPPFLAGS)
++
++AM_CFLAGS = $(OUR_CFLAGS)
++AM_LDFLAGS = $(OUR_LDFLAGS)
++
++# ------------------------------------------------------------------------------
++# varlink interface files
++
++%.varlink.c.inc: %.varlink
++	$(AM_V_GEN) \
++		if [ -x /usr/bin/varlink ]; then varlink format $< >/dev/null; fi && \
++		echo "static const char *$(subst .,_,$(patsubst %.h,%,$(notdir $<))) = R\"INTERFACE(" > $@ && \
++		cat $< >> $@ && \
++		echo ")INTERFACE\";" >> $@
++
++# ------------------------------------------------------------------------------
++# library archive
++
++noinst_LIBRARIES += \
++	libvarlink.a
++
++libvarlink_a_SOURCES = \
++        lib/array.c \
++        lib/array.h \
++        lib/avltree.c \
++        lib/avltree.h \
++        lib/connection.c \
++        lib/error.c \
++        lib/interface.c \
++        lib/interface.h \
++        lib/message.c \
++        lib/message.h \
++        lib/object.c \
++        lib/object.h \
++        lib/scanner.c \
++        lib/scanner.h \
++        lib/service.c \
++        lib/service.h \
++        lib/stream.c \
++        lib/stream.h \
++        lib/transport.c \
++        lib/transport.h \
++        lib/transport-device.c \
++        lib/transport-tcp.c \
++        lib/transport-unix.c \
++        lib/type.h \
++        lib/type.c \
++        lib/util.c \
++        lib/util.h \
++        lib/uri.c \
++        lib/uri.h \
++        lib/value.c \
++        lib/value.h \
++        lib/varlink.h
++
++libvarlink_a_CFLAGS = \
++	$(AM_CFLAGS)
++
++# ------------------------------------------------------------------------------
++# shared library built from archive
++
++all-local: libvarlink.so.0
++
++include_HEADERS += \
++	lib/varlink.h
++
++libvarlink.so.0: libvarlink.a $(top_srcdir)/lib/libvarlink.sym
++	$(AM_V_CCLD)$(LINK) -shared \
++	-Wl,-soname=$@ \
++	-Wl,--version-script=$(top_srcdir)/lib/libvarlink.sym \
++	-Wl,--whole-archive libvarlink.a -Wl,--no-whole-archive
++
++CLEANFILES += \
++	libvarlink.so.0
++
++install-exec-local:
++	@echo " $(MKDIR_P) '$(DESTDIR)$(libdir)'"; \
++		$(MKDIR_P) "$(DESTDIR)$(libdir)" || exit 1
++	@echo " $(INSTALL) libvarlink.so.0 '$(DESTDIR)$(libdir)'"; \
++		$(INSTALL) libvarlink.so.0 "$(DESTDIR)$(libdir)" || exit $$?
++	@echo " $(LN_S) -f libvarlink.so.0 '$(DESTDIR)$(libdir)/libvarlink.so'"; \
++		$(LN_S) -f libvarlink.so.0 "$(DESTDIR)$(libdir)/libvarlink.so" || exit $$?
++
++uninstall-local:
++	@test ! -d "$(DESTDIR)$(libdir)" || \
++		{ echo " ( cd '$(DESTDIR)$(libdir)' && rm -f libvarlink.so.0 )"; \
++		  rm -f "$(DESTDIR)$(libdir)/libvarlink.so.0"; }
++
++%.pc: %.pc.in
++	$(AM_V_GEN)$(SED) \
++		-e 's,@includedir\@,$(includedir),g' \
++		-e 's,@libdir\@,$(libdir),g' \
++		-e 's,@VERSION\@,$(VERSION),g' \
++		$< > $@
++
++pkgconfiglib_DATA += \
++	lib/libvarlink.pc
++
++BUILT_SOURCES += \
++	lib/org.varlink.service.varlink.c.inc
++
++TESTS += \
++	lib/test-symbols.sh
++
++EXTRA_DIST += \
++	lib/libvarlink.sym \
++	lib/org.varlink.service.varlink \
++	lib/libvarlink.pc.in \
++	lib/test-symbols.sh
++
++CLEANFILES += \
++	lib/libvarlink.pc
++
++# ------------------------------------------------------------------------------
++# test-interface
++
++check_PROGRAMS += test-interface
++
++test_interface_SOURCES = \
++	lib/test-interface.c
++
++test_interface_LDADD = \
++	libvarlink.a
++
++# ------------------------------------------------------------------------------
++# test-server-client
++
++check_PROGRAMS += test-server-client
++
++test_server_client_SOURCES = \
++	lib/test-server-client.c
++
++test_server_client_LDADD = \
++	libvarlink.a
++
++# ------------------------------------------------------------------------------
++# test-object
++
++check_PROGRAMS += test-object
++
++test_object_SOURCES = \
++	lib/test-object.c
++
++test_object_LDADD = \
++	libvarlink.a
++
++# ------------------------------------------------------------------------------
++# test-array
++
++check_PROGRAMS += test-array
++
++test_array_SOURCES = \
++	lib/test-array.c
++
++test_array_LDADD = \
++	libvarlink.a
++
++# ------------------------------------------------------------------------------
++# test-type
++
++check_PROGRAMS += test-type
++
++test_type_SOURCES = \
++	lib/test-type.c
++
++test_type_LDADD = \
++	libvarlink.a
++
++# ------------------------------------------------------------------------------
++# test-error
++
++check_PROGRAMS += test-error
++
++test_error_SOURCES = \
++	lib/test-error.c
++
++test_error_LDADD = \
++	libvarlink.a
++
++# ------------------------------------------------------------------------------
++# test-avl
++check_PROGRAMS += test-avl
++
++test_avl_SOURCES = \
++	lib/test-avl.c
++
++test_avl_LDADD = \
++	libvarlink.a
++
++# ------------------------------------------------------------------------------
++# command line tool
++bin_PROGRAMS += \
++	varlink
++
++varlink_SOURCES = \
++	tool/cli.c \
++	tool/cli.h \
++	tool/cli-bridge.c \
++	tool/cli-activate.c \
++	tool/command.c \
++	tool/command.h \
++	tool/command-bridge.c \
++	tool/command-call.c \
++	tool/command-complete.c \
++	tool/command-format.c \
++	tool/command-help.c \
++	tool/command-info.c \
++	tool/command-resolve.c \
++	tool/main.c \
++	tool/terminal-colors.c \
++	tool/terminal-colors.h
++
++varlink_CFLAGS = \
++	$(AM_CFLAGS)
++
++varlink_LDADD = \
++	libvarlink.a
++
++dist_bashcompletion_DATA += \
++	bash-completion/varlink
++
++# ------------------------------------------------------------------------------¶
++# vim syntax highlighting
++
++dist_vimftdetect_DATA = \
++	vim/ftdetect/varlink.vim
++
++dist_vimftplugin_DATA = \
++	vim/ftplugin/varlink.vim
++
++dist_vimsyntax_DATA = \
++	vim/syntax/varlink.vim
++
++# ------------------------------------------------------------------------------¶
++# test suite
++
++AM_TESTS_ENVIRONMENT = LD_LIBRARY_PATH=$(abs_builddir)
++TESTS += $(check_PROGRAMS)
++
++# ------------------------------------------------------------------------------
++if HAVE_ASTYLE
++check-format:
++	@for f in lib/*.[ch] tool/*.[ch]; do \
++		echo "  CHECK-FORMAT $$f"; \
++		$(ASTYLE) --quiet --options=$(abs_srcdir)/.astylerc < $$f | cmp -s $$f -; \
++		if [ $$? -ne 0 ]; then \
++			$(ASTYLE) --quiet --options=$(abs_srcdir)/.astylerc < $$f | diff -u $$f -; \
++			exit 1; \
++		fi; \
++	done
++
++format:
++	@for f in lib/*.[ch] tool/*.[ch]; do \
++		echo "  FORMAT $$f"; \
++		$(ASTYLE) --quiet --options=$(abs_srcdir)/.astylerc $$f; \
++	done
++endif
++.PHONY: check-format
++.PHONY: format
++
++if HAVE_VALGRIND
++check-valgrind: $(check_PROGRAMS)
++	@for f in $^; do \
++		echo "  VALGRIND $$f"; \
++		valgrind --quiet --leak-check=full --error-exitcode=1 $(builddir)/$$f || exit $$?; \
++	done
++check: check-valgrind
++endif
++.PHONY: check-valgrind
++
++install-tree: all
++	rm -rf $(abs_builddir)/install-tree
++	$(MAKE) install DESTDIR=$(abs_builddir)/install-tree
++	tree $(abs_builddir)/install-tree
++.PHONY: install-tree
+diff --git a/Makefile b/Makefile.meson
+similarity index 100%
+rename from Makefile
+rename to Makefile.meson
+diff --git a/autogen.sh b/autogen.sh
+new file mode 100755
+index 0000000..788fc3a
+--- /dev/null
++++ b/autogen.sh
+@@ -0,0 +1,23 @@
++#!/bin/bash
++set -e
++
++oldpwd=$(pwd)
++topdir=$(dirname $0)
++
++cd $topdir
++mkdir -p ./build/m4/
++autoreconf --force --install --symlink
++cd $oldpwd
++
++if [[ "$1" == "c" ]]; then
++        $topdir/configure CFLAGS="-ggdb3 -Og" --prefix=/usr --libdir=$(cd "/usr/lib/$(gcc -print-multi-os-directory)"; pwd)
++        make clean
++else
++        echo
++        echo "----------------------------------------------------------------"
++        echo "Initialized build system. For a common configuration please run:"
++        echo "----------------------------------------------------------------"
++        echo
++        echo "$topdir/configure"
++        echo
++fi
+diff --git a/configure.ac b/configure.ac
+new file mode 100644
+index 0000000..c6125aa
+--- /dev/null
++++ b/configure.ac
+@@ -0,0 +1,138 @@
++# ------------------------------------------------------------------------------
++# versions
++
++AC_PREREQ([2.64])
++AC_INIT([libvarlink],
++        [1],
++        [http://www.github.com/varlink/libvarlink],
++        [libvarlink],
++        [http://www.github.com/varlink/libvarlink])
++
++# ------------------------------------------------------------------------------
++# autotools
++
++AC_CONFIG_SRCDIR([lib/varlink.h])
++AC_CONFIG_MACRO_DIR([build/m4])
++AC_CONFIG_HEADERS([build/config.h])
++AC_CONFIG_AUX_DIR([build/build-aux])
++
++# suppress conflicting defaults
++CFLAGS=${CFLAGS:-""}
++CXXFLAGS=${CXXFLAGS:-""}
++
++AC_USE_SYSTEM_EXTENSIONS
++AC_SYS_LARGEFILE
++AM_MAINTAINER_MODE([enable])
++AM_INIT_AUTOMAKE([foreign 1.11 -Wall -Wno-portability silent-rules tar-pax no-dist-gzip dist-xz subdir-objects parallel-tests])
++AM_SILENT_RULES([yes])
++AC_CANONICAL_HOST
++AC_DEFINE_UNQUOTED([CANONICAL_HOST], "$host", [Canonical host string.])
++AC_PROG_CC_C99
++AC_PROG_LN_S
++AC_PROG_RANLIB
++AC_PROG_SED
++
++AC_CHECK_TOOL([ASTYLE], [astyle], [no])
++AM_CONDITIONAL([HAVE_ASTYLE], [test "$ASTYLE" != no])
++AC_SUBST(HAVE_ASTYLE)
++
++AC_CHECK_TOOL([VALGRIND], [valgrind], [no])
++AM_CONDITIONAL([HAVE_VALGRIND], [test "$VALGRIND" != no])
++AC_SUBST(HAVE_VALGRIND)
++
++m4_pattern_forbid([^_?PKG_[A-Z_]+$],[*** pkg.m4 missing, please install pkg-config])
++
++# ------------------------------------------------------------------------------
++# toolchain
++
++OUR_CFLAGS=${OUR_CFLAGS:-$(echo \
++        -g \
++        -Og \
++        -pipe \
++        -ftrapv \
++        -ffast-math \
++        -fno-common \
++        -fdiagnostics-show-option \
++        -fno-strict-aliasing \
++        -fvisibility=hidden \
++        -ffunction-sections \
++        -fdata-sections \
++        -fstack-protector \
++        -fPIC \
++        --param=ssp-buffer-size=4 \
++        -Wall \
++        -Wextra \
++        -Wno-inline \
++        -Wundef \
++        -Wformat=2 \
++        -Wformat-security \
++        -Wformat-nonliteral \
++        -Wsuggest-attribute=format \
++        -Wsign-compare \
++        -Wmissing-include-dirs \
++        -Wold-style-definition \
++        -Wpointer-arith \
++        -Winit-self \
++        -Wdeclaration-after-statement \
++        -Wfloat-equal \
++        -Wmissing-prototypes \
++        -Wstrict-prototypes \
++        -Wswitch-enum \
++        -Wredundant-decls \
++        -Wmissing-declarations \
++        -Wmissing-noreturn \
++        -Wshadow \
++        -Wendif-labels \
++        -Wstrict-aliasing=2 \
++        -Wwrite-strings \
++        -Wno-long-long \
++        -Wno-overlength-strings \
++        -Wno-unused-parameter \
++        -Wno-missing-field-initializers \
++        -Wno-unused-result \
++        -Werror=overflow \
++        -Wnested-externs)}
++
++OUR_CPPFLAGS=${OUR_CPPFLAGS:-$(echo \
++        -Wp,-D_FORTIFY_SOURCE=2)}
++
++OUR_LDFLAGS=${OUR_LDFLAGS:-$(echo \
++        -Wl,--as-needed \
++        -Wl,--no-undefined \
++        -Wl,--gc-sections \
++        -Wl,-z,relro \
++        -Wl,-z,now \
++        -pie)}
++
++AC_SUBST(OUR_CFLAGS)
++AC_SUBST(OUR_CPPFLAGS)
++AC_SUBST(OUR_LDFLAGS)
++
++# ------------------------------------------------------------------------------
++AS_CASE([$host],
++        [x86_64*], [ARCHITECTURE_TUPLE=x86_64-linux-gnu],
++        [arm*],    [ARCHITECTURE_TUPLE=arm-linux-gnueabihf],
++        [AC_MSG_ERROR([*** unknown architecture])]
++)
++AC_SUBST(ARCHITECTURE_TUPLE)
++
++# ------------------------------------------------------------------------------
++# report
++
++AC_CONFIG_FILES([Makefile])
++
++AC_OUTPUT
++AC_MSG_RESULT([
++        $PACKAGE_NAME $VERSION
++        prefix:                 ${prefix}
++        exec_prefix:            ${exec_prefix}
++        includedir:             ${includedir}
++
++        CFLAGS:                 ${OUR_CFLAGS} ${CFLAGS}
++        CPPFLAGS:               ${OUR_CPPFLAGS} ${CPPFLAGS}
++        LDFLAGS:                ${OUR_LDFLAGS} ${LDFLAGS}
++        HOST:                   ${host}
++        ARCHITECTURE_TUPLE:     ${ARCHITECTURE_TUPLE}
++        ASTYLE:                 ${ASTYLE}
++        VALGRIND:               ${VALGRIND}
++])
+-- 
+2.17.1
+
